@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #313338;
+  --color-bg-2: #2b2d31;
+  --color-surface: #383a40;
+  --color-surface-2: #404249;
+  --color-fg: #f2f3f5;
+  --color-muted: #b5bac1;
+  --color-primary: #5865f2;
+  --color-primary-ink: #ffffff;
+  --color-accent: #23a559;
+  --color-accent-ink: #ffffff;
+  --color-line: #3f4147;
+  --font-sans: "Noto Sans JP", "Hiragino Sans", "Yu Gothic", sans-serif;
+  --font-display: "Dela Gothic One", "Noto Sans JP", sans-serif;
+  --radius: 0.5rem;
+}
+
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  html,
+  body {
+    min-height: 100%;
+  }
+
+  body {
+    background-color: #1e1f22;
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    line-height: 1.5;
+  }
+
+  ::selection {
+    background: var(--color-primary);
+    color: var(--color-primary-ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.msg-in {
+  animation: rise 0.35s ease both;
+}
+
+.live-dot {
+  animation: blink 1.4s ease infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-in,
+  .live-dot {
+    animation: none;
+  }
+}
