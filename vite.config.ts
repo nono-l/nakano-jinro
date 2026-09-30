@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Plugin } from "vite";
 import { defineConfig } from "vite";
@@ -142,14 +142,62 @@ function authPopupPlugin(): Plugin {
   };
 }
 
+export function nextBuildCount(prev: { date?: string; index?: number } | null, today: string): number {
+  if (prev && prev.date === today && typeof prev.index === "number" && prev.index >= 1) return prev.index + 1;
+  return 1;
+}
+
+const STAMP_PATH = join(process.cwd(), "src/game/build-stamp.ts");
+
+function readStamp(): { date?: string; index?: number; iso?: string } | null {
+  try {
+    if (!existsSync(STAMP_PATH)) return null;
+    const text = readFileSync(STAMP_PATH, "utf8");
+    const date = text.match(/BUILD_DATE = "(\d{4}-\d{2}-\d{2})"/)?.[1];
+    const iso = text.match(/BUILD_ISO = "([^"]+)"/)?.[1];
+    const index = Number(text.match(/BUILD_INDEX = (\d+)/)?.[1]);
+    if (!date || !Number.isFinite(index)) return null;
+    return { date, index, iso };
+  } catch {
+    return null;
+  }
+}
+
+function writeStamp(stamp: { date: string; iso: string; index: number }) {
+  const body = `export const BUILD_DATE = ${JSON.stringify(stamp.date)};\nexport const BUILD_ISO = ${JSON.stringify(stamp.iso)};\nexport const BUILD_INDEX = ${stamp.index};\n`;
+  writeFileSync(STAMP_PATH, body);
+}
+
+/** Same JST date keeps counting. A different build date starts again at 1. */
+function todayBuild(): { iso: string; index: number } {
+  const date = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+  const prev = readStamp();
+  const age = prev?.iso ? Date.now() - Date.parse(prev.iso) : Number.POSITIVE_INFINITY;
+  const sameBurst = prev?.date === date && age >= 0 && age < 15000 && typeof prev.index === "number";
+  const index = sameBurst ? prev.index! : nextBuildCount(prev, date);
+  const iso = sameBurst && prev?.iso ? prev.iso : new Date().toISOString();
+  writeStamp({ date, index, iso });
+  return { iso, index };
+}
+
 // `0.0.0.0:8080` is the live-preview contract — don't change host/port.
 // The dev server starts once `src/router.tsx` and `src/routes/` exist — see
 // AGENTS.md § "First scaffold".
-export default defineConfig(({ command, isPreview }) => ({
+export default defineConfig(({ command, isPreview }) => {
+  const build = todayBuild();
+  return {
   server: {
     host: "0.0.0.0",
     port: 8080,
     strictPort: true,
+    watch: {
+      ignored: ["**/.nakano-build.json", "**/build-stamp.ts"],
+    },
   },
   preview: {
     host: "127.0.0.1",
@@ -157,6 +205,10 @@ export default defineConfig(({ command, isPreview }) => ({
     strictPort: true,
   },
   resolve: { tsconfigPaths: true },
+  define: {
+    __NAKANO_BUILD_TIME__: JSON.stringify(build.iso),
+    __NAKANO_BUILD_INDEX__: JSON.stringify(build.index),
+  },
   plugins: [
     pgliteBootstrapPlugin(),
     // Before tanstackStart so /auth/popup never falls through to the SPA.
@@ -180,4 +232,5 @@ export default defineConfig(({ command, isPreview }) => ({
       : []),
     viteReact(),
   ],
-}));
+  };
+});

@@ -1,4 +1,4 @@
-import { DAYS, INNERS, PERSONAS, type ChannelId, type QuestionId, speak } from "./content";
+import { DAYS, INNERS, PERSONAS, SHOTS, type ChannelId, type QuestionId, type Shot, speak } from "./content";
 import { PATTERNS, SLOTS, type ClueSlot } from "./patterns";
 
 export type Mark = "sus" | "safe";
@@ -52,6 +52,7 @@ export type GameState = {
   log: LogItem[];
   marks: Record<string, Mark | undefined>;
   notes: Record<string, string>;
+  pins: string[];
   selected: string | null;
   result: Result | null;
 };
@@ -62,6 +63,7 @@ export type Action =
   | { type: "select"; id: string }
   | { type: "mark"; id: string; mark: Mark }
   | { type: "note"; id: string; text: string }
+  | { type: "pin"; id: string }
   | { type: "dm"; questionId: QuestionId }
   | { type: "archive" }
   | { type: "voice" }
@@ -83,9 +85,22 @@ export const initialState: GameState = {
   log: [],
   marks: {},
   notes: {},
+  pins: [],
   selected: null,
   result: null,
 };
+
+export function codeOf(seed: number): string {
+  return (seed >>> 0).toString(36).toUpperCase().padStart(7, "0");
+}
+
+export function seedOf(code: string): number | null {
+  const raw = code.trim().toUpperCase().replace(/[^0-9A-Z]/g, "");
+  if (!raw || raw.length > 7) return null;
+  const n = Number.parseInt(raw, 36);
+  if (!Number.isInteger(n) || n <= 0 || n > 0xffffffff) return null;
+  return n;
+}
 
 function mulberry32(seed: number) {
   let a = seed >>> 0;
@@ -167,6 +182,14 @@ function pickSlots(seed: number, personaId: string): ClueSlot[] {
 
 const VOICED = new Set<ClueSlot>(["join", "status", "about", "stamp", "image", "react"]);
 
+function pickShot(innerId: string, seed: number, personaId: string, day: number, salt: number): Shot {
+  const shots = SHOTS[innerId] ?? SHOTS.girl ?? [];
+  let n = salt + day * 19;
+  for (const ch of personaId) n = (n * 33 + ch.charCodeAt(0)) | 0;
+  const rng = mulberry32(((seed || 1) + (n >>> 0)) >>> 0);
+  return shots[Math.floor(rng() * shots.length)] ?? { file: `/logs/${innerId}.jpg`, line: "" };
+}
+
 const SLOT_LABEL: Record<ClueSlot, string> = {
   join: "参加",
   voice: "ボイス",
@@ -214,10 +237,16 @@ function patternLogs(assignments: Record<string, string>, seed: number, day: num
       items.push({ ...base, kind: "chat", channel: "react", text: said });
     } else if (slot === "stamp") {
       items.push({ ...base, kind: "stamp", channel: "stamp", stamp: inner.stampEmoji, text: said });
-    } else if (slot === "file") {
-      items.push({ ...base, kind: "image", channel: "media", image: `/logs/${inner.id}.jpg`, text: `ファイルをアップロードしました：${said}` });
-    } else {
-      items.push({ ...base, kind: "image", channel: "media", image: `/logs/${inner.id}.jpg`, text: said });
+    } else if (slot === "file" || slot === "image") {
+      const shot = pickShot(inner.id, seed, persona.id, day, slot === "file" ? 3 : 1);
+      const line = shot.line || said;
+      items.push({
+        ...base,
+        kind: "image",
+        channel: "media",
+        image: shot.file,
+        text: slot === "file" ? `ファイルをアップロードしました：${line}` : speak(persona.id, line, seed + day * 13 + persona.id.length),
+      });
     }
   }
   return items;
@@ -425,7 +454,7 @@ export function reducer(state: GameState, action: Action): GameState {
     case "title":
       return { ...initialState };
     case "hydrate":
-      return action.state;
+      return { ...action.state, pins: Array.isArray(action.state.pins) ? action.state.pins : [] };
     case "select":
       if (state.screen !== "play") return state;
       return { ...state, selected: action.id };
@@ -438,8 +467,14 @@ export function reducer(state: GameState, action: Action): GameState {
     }
     case "note": {
       if (!state.assignments[action.id]) return state;
-      const notes = { ...state.notes, [action.id]: action.text.slice(0, 40) };
+      const notes = { ...state.notes, [action.id]: action.text.slice(0, 120) };
       return { ...state, notes };
+    }
+    case "pin": {
+      if (state.screen !== "play") return state;
+      if (!state.log.some((item) => item.id === action.id)) return state;
+      const has = state.pins.includes(action.id);
+      return { ...state, pins: has ? state.pins.filter((id) => id !== action.id) : [...state.pins, action.id] };
     }
     case "dm":
     case "archive":

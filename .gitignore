@@ -12,3 +12,4 @@ screenshots
 *.log
 .project_id
 .DS_Store
+.nakano-build.json

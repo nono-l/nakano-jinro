@@ -41,7 +41,7 @@ export const QUESTIONS: { id: QuestionId; label: string; hint: string; ask: stri
   { id: "family", label: "家族と配信", hint: "誰が見ているか", ask: "家族は、この配信を見てくれてる？" },
 ];
 
-export type ChannelId = "zatsu" | "join" | "profile" | "media" | "stamp" | "react" | "dm";
+export type ChannelId = "zatsu" | "join" | "profile" | "media" | "stamp" | "react" | "dm" | "pins";
 
 export const CHANNELS: { id: ChannelId; name: string; topic: string }[] = [
   { id: "zatsu", name: "雑談", topic: "コラボの本番。口調は演技" },
@@ -51,6 +51,7 @@ export const CHANNELS: { id: ChannelId; name: string; topic: string }[] = [
   { id: "stamp", name: "スタンプ", topic: "気分スタンプ" },
   { id: "react", name: "リアクション", topic: "反応" },
   { id: "dm", name: "ダイレクト", topic: "調査の結果だけ、事実" },
+  { id: "pins", name: "証拠", topic: "自分でピンした発言" },
 ];
 
 export const DAYS = [
@@ -380,6 +381,71 @@ export function personaById(id: string): Persona {
   if (!persona) throw new Error(`unknown persona ${id}`);
   return persona;
 }
+
+export type Shot = { file: string; line: string };
+
+export const SHOTS: Record<string, Shot[]> = {
+  girl: [
+    { file: "/logs/girl.jpg", line: "机。プリントが端から落ちそう。" },
+    { file: "/logs/girl-milk.jpg", line: "飲みかけの甘いもの。お酒の缶はない。" },
+    { file: "/logs/girl-shoes.jpg", line: "スニーカーと、講義の袋。" },
+    { file: "/logs/girl-notes.jpg", line: "レジュメと赤ペン。まだ学生の机。" },
+  ],
+  it: [
+    { file: "/logs/it.jpg", line: "机。モニタが二つ。" },
+    { file: "/logs/it-cables.jpg", line: "ケーブルが、まだまとまってない。" },
+    { file: "/logs/it-cans.jpg", line: "缶が、キーボードの横に残ってる。" },
+    { file: "/logs/it-glasses.jpg", line: "眼鏡を、コードの上に置いた。" },
+  ],
+  boss: [
+    { file: "/logs/boss.jpg", line: "上着を掛けた椅子。" },
+    { file: "/logs/boss-whiskey.jpg", line: "グラスが、まだ残ってる。" },
+    { file: "/logs/boss-golf.jpg", line: "ゴルフの手袋と、明日の鍵。" },
+    { file: "/logs/boss-card.jpg", line: "名刺入れ。朝まで出してあった。" },
+  ],
+  gamer: [
+    { file: "/logs/gamer.jpg", line: "光ってる机。麺のカップ。" },
+    { file: "/logs/gamer-rgb.jpg", line: "キーボードが、夜も光ってる。" },
+    { file: "/logs/gamer-noodle.jpg", line: "麺のカップと、潰れた缶。" },
+    { file: "/logs/gamer-pad.jpg", line: "朝になっても、画面がついてる。" },
+  ],
+  baseball: [
+    { file: "/logs/baseball.jpg", line: "グラブと、今夜の缶。" },
+    { file: "/logs/baseball-glove.jpg", line: "グラブと缶。今日はここまで。" },
+    { file: "/logs/baseball-paper.jpg", line: "スポーツ面と、今夜の缶。" },
+    { file: "/logs/baseball-sleeve.jpg", line: "袖を、椅子に掛けたまま。" },
+  ],
+  family: [
+    { file: "/logs/family.jpg", line: "冷蔵庫。絵が貼ってある。" },
+    { file: "/logs/family-fridge.jpg", line: "冷蔵庫。描いたのは、うちの子。" },
+    { file: "/logs/family-bento.jpg", line: "弁当が二つ。大きいのと、小さいの。" },
+    { file: "/logs/family-shoes.jpg", line: "玄関に、小さい靴。" },
+  ],
+  stock: [
+    { file: "/logs/stock.jpg", line: "時計と、数字の画面。" },
+    { file: "/logs/stock-watch.jpg", line: "時計と、数字の画面。配当の日。" },
+    { file: "/logs/stock-coffee.jpg", line: "新聞と、黒いコーヒー。" },
+    { file: "/logs/stock-calc.jpg", line: "電卓が、まだ出しっぱなし。" },
+  ],
+  sauna: [
+    { file: "/logs/sauna.jpg", line: "バッグ。タオルと缶。" },
+    { file: "/logs/sauna-bag.jpg", line: "タオルと、サウナのあとの缶。" },
+    { file: "/logs/sauna-bottle.jpg", line: "水のボトルが空。" },
+    { file: "/logs/sauna-sandals.jpg", line: "自分のサンダルだけ、残ってる。" },
+  ],
+  train: [
+    { file: "/logs/train.jpg", line: "模型と、折った時刻表。" },
+    { file: "/logs/train-model.jpg", line: "模型。棚の端まで、線路。" },
+    { file: "/logs/train-time.jpg", line: "折った時刻表と、鉛筆。" },
+    { file: "/logs/train-bento.jpg", line: "駅弁の空箱。今夜の分。" },
+  ],
+  otaku: [
+    { file: "/logs/otaku.jpg", line: "棚。フィギュアと缶と眼鏡。" },
+    { file: "/logs/otaku-shelf.jpg", line: "棚。フィギュアと缶と、老眼鏡。" },
+    { file: "/logs/otaku-cheki.jpg", line: "チェキの束。日付が、かなり古い。" },
+    { file: "/logs/otaku-acrylic.jpg", line: "アクリルと、飲みかけの缶。" },
+  ],
+};
 
 export function speak(personaId: string, body: string, salt: number): string {
   const persona = personaById(personaId);

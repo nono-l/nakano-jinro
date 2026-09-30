@@ -10,6 +10,7 @@ import {
   Users,
   X,
   RotateCcw,
+  Pin,
 } from "lucide-react";
 import {
   CHANNELS,
@@ -23,6 +24,8 @@ import {
 } from "@/game/content";
 import {
   initialState,
+  codeOf,
+  seedOf,
   rankLabel,
   reducer,
   type Action,
@@ -30,7 +33,8 @@ import {
   type LogItem,
   type Mark,
 } from "@/game/engine";
-import { loadStats, saveResult, type Stats } from "@/game/stats";
+import { loadHistory, loadStats, saveResult, saveRound, type PastRound, type Stats } from "@/game/stats";
+import { BUILD_INDEX, BUILD_ISO } from "@/game/build-stamp";
 import { clearSession, loadSession, saveSession } from "@/game/session";
 
 type Modal = null | "rules" | "coach" | "dm" | "cross" | "end";
@@ -46,6 +50,7 @@ function Face({ src, alt, className }: { src: string; alt: string; className?: s
 export function GameApp() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [history, setHistory] = useState<PastRound[]>([]);
   const [modal, setModal] = useState<Modal>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [onlySelected, setOnlySelected] = useState(false);
@@ -64,6 +69,7 @@ export function GameApp() {
       dispatch({ type: "hydrate", state: saved.state });
     }
     setStats(loadStats());
+    setHistory(loadHistory());
     setReady(true);
   }, []);
 
@@ -133,7 +139,10 @@ export function GameApp() {
 
   function send(action: Action) {
     const next = reducer(state, action);
-    if (next.result && !state.result) setStats(saveResult(next.result.win, next.result.score));
+    if (next.result && !state.result) {
+      setStats(saveResult(next.result.win, next.result.score));
+      setHistory(saveRound({ seed: next.seed, win: next.result.win, score: next.result.score }));
+    }
     if (action.type === "start") {
       setOnlySelected(false);
       setDraft(null);
@@ -144,16 +153,26 @@ export function GameApp() {
     dispatch(action);
   }
 
-  function start() {
+  function start(seed?: number) {
     const buf = new Uint32Array(1);
     crypto.getRandomValues(buf);
     setChannel("zatsu");
-    send({ type: "start", seed: buf[0] || 1 });
+    send({ type: "start", seed: seed ?? (buf[0] || 1) });
   }
 
   function restart() {
-    if (!window.confirm("いまの配信を消して、最初からにしますか？")) return;
+    if (!window.confirm("この配信を終わらせて、最初から始めますか？")) return;
+    setModal(null);
+    setDraft(null);
     start();
+  }
+
+  function resetRecord() {
+    if (!window.confirm("記録を消して、タイトルに戻りますか？")) return;
+    setChannel("zatsu");
+    setModal(null);
+    setDraft(null);
+    send({ type: "title" });
   }
 
   function needTarget(): boolean {
@@ -176,7 +195,7 @@ export function GameApp() {
     <>
       {!ready ? <div className="h-dvh bg-[#1e1f22]" /> : null}
       {ready && state.screen === "title" ? (
-        <TitleScreen stats={stats} onStart={start} onRules={() => setModal("rules")} />
+        <TitleScreen stats={stats} history={history} onStart={() => start()} onJoin={start} onRules={() => setModal("rules")} />
       ) : null}
       {ready && state.screen === "play" ? (
         <PlayScreen
@@ -190,6 +209,7 @@ export function GameApp() {
           onSelect={(id) => send({ type: "select", id })}
           onMark={(id, mark) => send({ type: "mark", id, mark })}
           onNote={(id, text) => send({ type: "note", id, text })}
+          onPin={(id) => send({ type: "pin", id })}
           onTool={(kind) => {
             if (needTarget()) return;
             if (kind === "dm") setModal("dm");
@@ -203,6 +223,7 @@ export function GameApp() {
             setModal("end");
           }}
           onRestart={restart}
+          onReset={resetRecord}
           onRules={() => setModal("rules")}
         />
       ) : null}
@@ -271,10 +292,41 @@ export function GameApp() {
   );
 }
 
-function TitleScreen({ stats, onStart, onRules }: { stats: Stats | null; onStart: () => void; onRules: () => void }) {
+function buildStamp(): string {
+  const when = new Date(BUILD_ISO);
+  if (Number.isNaN(when.getTime())) return "";
+  const text = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).format(when);
+  return `${text} JST・この日の${BUILD_INDEX}回目`;
+}
+
+function TitleScreen({
+  stats,
+  history,
+  onStart,
+  onJoin,
+  onRules,
+}: {
+  stats: Stats | null;
+  history: PastRound[];
+  onStart: () => void;
+  onJoin: (seed: number) => void;
+  onRules: () => void;
+}) {
   const wins = stats && stats.plays > 0 ? Math.round((stats.wins / stats.plays) * 100) : null;
+  const [code, setCode] = useState("");
+  const joined = seedOf(code);
   return (
-    <main className="flex min-h-dvh items-center justify-center px-4 py-8">
+    <main className="relative flex min-h-dvh items-center justify-center px-4 py-8">
+      <p className="absolute bottom-3 left-3 text-[11px] tabular-nums text-muted">ビルド {buildStamp()}</p>
       <div className="w-full max-w-md rounded-lg bg-bg p-6 shadow-2xl">
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-primary text-2xl font-bold text-primary-ink">狼</div>
         <p className="mt-4 text-center text-xs font-bold uppercase tracking-wide text-muted">サーバーへ招待されました</p>
@@ -298,6 +350,36 @@ function TitleScreen({ stats, onStart, onRules }: { stats: Stats | null; onStart
         >
           サーバーに参加
         </button>
+        <form
+          className="mt-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (joined) onJoin(joined);
+          }}
+        >
+          <label className="block text-xs text-muted" htmlFor="room-code">
+            局コードで、同じ中の人のサーバーに入る
+          </label>
+          <div className="mt-1 flex gap-2">
+            <input
+              id="room-code"
+              value={code}
+              onChange={(event) => setCode(event.target.value.toUpperCase())}
+              placeholder="例 00K7M2Q"
+              autoCapitalize="characters"
+              spellCheck={false}
+              className="min-h-11 min-w-0 flex-1 rounded-md bg-surface px-3 text-sm tracking-widest text-fg outline-none"
+            />
+            <button
+              type="submit"
+              disabled={!joined}
+              className="inline-flex min-h-11 shrink-0 items-center rounded-md bg-surface px-3 text-sm font-medium text-fg disabled:opacity-40"
+            >
+              このコードで参加
+            </button>
+          </div>
+          {code.trim() && !joined ? <p className="mt-1 text-xs text-muted">そのコードは使えない。</p> : null}
+        </form>
         <button
           type="button"
           data-testid="open-rules"
@@ -311,6 +393,23 @@ function TitleScreen({ stats, onStart, onRules }: { stats: Stats | null; onStart
           <Stat label="連勝" value={stats ? String(stats.streak) : "—"} />
           <Stat label="的中" value={wins === null ? "—" : `${wins}%`} />
         </dl>
+        {history.length > 0 ? (
+          <div className="mt-4 border-t border-line pt-3">
+            <p className="text-xs font-bold text-muted">最近の局</p>
+            <ul className="mt-1">
+              {history.map((round) => (
+                <li key={round.seed} className="flex items-center gap-2">
+                  <span className="w-16 shrink-0 tracking-widest text-xs text-fg">{codeOf(round.seed)}</span>
+                  <span className={cx("text-xs", round.win ? "text-accent" : "text-muted")}>{round.win ? "勝ち" : "負け"}</span>
+                  <span className="text-xs text-muted">{round.score}</span>
+                  <button type="button" onClick={() => onJoin(round.seed)} className="ml-auto inline-flex min-h-11 items-center px-2 text-xs font-medium text-fg">
+                    もう一度
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
     </main>
   );
@@ -336,9 +435,11 @@ function PlayScreen({
   onSelect,
   onMark,
   onNote,
+  onPin,
   onTool,
   onEnd,
   onRestart,
+  onReset,
   onRules,
 }: {
   state: GameState;
@@ -351,28 +452,98 @@ function PlayScreen({
   onSelect: (id: string) => void;
   onMark: (id: string, mark: Mark) => void;
   onNote: (id: string, text: string) => void;
+  onPin: (id: string) => void;
   onTool: (kind: "dm" | "archive" | "voice" | "cross") => void;
   onEnd: () => void;
   onRestart: () => void;
+  onReset: () => void;
   onRules: () => void;
 }) {
   const day = DAYS[state.day] ?? DAYS[0];
   const aliveCount = PERSONAS.length - state.exiled.length;
   const selected = state.selected ? personaById(state.selected) : null;
   const current = CHANNELS.find((item) => item.id === channel) ?? CHANNELS[0];
+  const [dossier, setDossier] = useState(false);
+  const [compare, setCompare] = useState(false);
+  const [pair, setPair] = useState<string[]>([]);
+  const [query, setQuery] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [todayOnly, setTodayOnly] = useState(false);
   const [seen, setSeen] = useState<Partial<Record<ChannelId, number>>>({});
+  const needle = query.trim();
+  const searching = needle.length > 0;
   useEffect(() => {
     setSeen({});
+    setQuery("");
+    setDossier(false);
+    setCompare(false);
+    setPair([]);
+    setTodayOnly(false);
   }, [state.seed]);
   useEffect(() => {
     const count = state.log.filter((item) => (item.channel ?? "zatsu") === channel).length;
     setSeen((prev) => (prev[channel] === count ? prev : { ...prev, [channel]: count }));
   }, [channel, state.log, state.seed]);
-  const visible = state.log.filter((item) => (item.channel ?? "zatsu") === channel && (!onlySelected || !item.personaId || item.personaId === state.selected || item.targetId === state.selected));
+  const pins = state.pins ?? [];
+  const comparing = compare && !searching;
+  const inDossier = !searching && !comparing && dossier && Boolean(state.selected);
+  const inCompare = comparing && pair.length === 2;
+  const visible = searching
+    ? state.log.filter((item) => {
+        const persona = item.personaId ? personaById(item.personaId).name : "";
+        const target = item.targetId ? personaById(item.targetId).name : "";
+        return `${persona} ${target} ${item.slot ?? ""} ${item.text}`.includes(needle);
+      })
+    : comparing
+      ? pair.length < 2
+        ? []
+        : state.log.filter((item) => (item.personaId && pair.includes(item.personaId)) || (item.targetId && pair.includes(item.targetId)))
+      : dossier && !state.selected
+        ? []
+        : inDossier
+          ? state.log.filter((item) => item.personaId === state.selected || item.targetId === state.selected)
+          : channel === "pins"
+            ? pins.flatMap((id) => {
+                const item = state.log.find((entry) => entry.id === id);
+                return item ? [item] : [];
+              })
+            : state.log.filter((item) => (item.channel ?? "zatsu") === channel);
+  const shown = visible
+    .filter((item) => searching || inDossier || inCompare || !onlySelected || !item.personaId || item.personaId === state.selected || item.targetId === state.selected)
+    .filter((item) => !todayOnly || item.day === state.day);
+  const openChannel = (id: ChannelId) => {
+    setDossier(false);
+    setCompare(false);
+    setQuery("");
+    onChannel(id);
+  };
+  const quoteLine = (item: LogItem) => {
+    if (!item.personaId) return;
+    const clean = item.text.replace(/\s+/g, " ").trim();
+    const quote = clean.length > 36 ? `${clean.slice(0, 36)}…` : clean;
+    if (!quote) return;
+    const current = state.notes[item.personaId] ?? "";
+    if (current.includes(quote.replace(/…$/, ""))) {
+      onSelect(item.personaId);
+      return;
+    }
+    onNote(item.personaId, current ? `${current} / ${quote}` : quote);
+    onSelect(item.personaId);
+  };
+  const pickPerson = (id: string) => {
+    if (compare) {
+      setPair((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id].slice(-2)));
+    }
+    onSelect(id);
+  };
   const unread = (id: ChannelId) => {
     const count = state.log.filter((item) => (item.channel ?? "zatsu") === id).length;
     return id !== channel && count > (seen[id] ?? 0);
   };
+  useEffect(() => {
+    if (!inDossier && !searching && !inCompare) return;
+    logRef.current?.scrollTo({ top: 0 });
+  }, [inDossier, searching, inCompare, needle, state.selected, pair, logRef]);
 
   return (
     <div className="flex h-dvh w-full bg-[#1e1f22] text-fg">
@@ -393,7 +564,7 @@ function PlayScreen({
               <li key={item.id}>
                 <button
                   type="button"
-                  onClick={() => onChannel(item.id)}
+                  onClick={() => openChannel(item.id)}
                   className={cx(
                     "flex min-h-11 w-full items-center gap-1.5 rounded px-2 text-left text-sm",
                     channel === item.id ? "bg-surface font-medium text-fg" : "text-muted hover:bg-surface/60 hover:text-fg",
@@ -401,7 +572,11 @@ function PlayScreen({
                 >
                   <Hash className="h-4 w-4 shrink-0" aria-hidden />
                   <span className="truncate">{item.name}</span>
-                  {unread(item.id) ? <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-fg" /> : null}
+                  {item.id === "pins" && pins.length > 0 ? (
+                    <span className="ml-auto text-xs text-muted">{pins.length}</span>
+                  ) : unread(item.id) ? (
+                    <span className="ml-auto h-2 w-2 shrink-0 rounded-full bg-fg" />
+                  ) : null}
                 </button>
               </li>
             ))}
@@ -409,6 +584,9 @@ function PlayScreen({
         </div>
         <button type="button" onClick={onRestart} className="mx-2 mt-2 inline-flex min-h-11 items-center rounded px-2 text-sm text-muted hover:bg-surface hover:text-fg">
           最初から
+        </button>
+        <button type="button" onClick={onReset} className="mx-2 inline-flex min-h-11 items-center rounded px-2 text-sm text-muted hover:bg-surface hover:text-fg">
+          初期化
         </button>
         <button type="button" onClick={onRules} className="m-2 inline-flex min-h-11 items-center gap-2 rounded px-2 text-sm text-muted hover:bg-surface hover:text-fg">
           <BookOpen className="h-4 w-4" aria-hidden />
@@ -420,9 +598,55 @@ function PlayScreen({
         <header className="flex h-12 shrink-0 items-center gap-2 border-b border-black/20 px-3 shadow-sm">
           <Hash className="h-5 w-5 shrink-0 text-muted" aria-hidden />
           <div className="min-w-0">
-            <p className="truncate text-sm font-bold text-fg">{current?.name}</p>
+            <p className="truncate text-sm font-bold text-fg">
+              {searching ? "検索" : inCompare ? pair.map((id) => personaById(id).name).join(" × ") : comparing ? "比べる" : inDossier && selected ? `${selected.name}の記録` : current?.name}
+            </p>
           </div>
-          <p className="hidden min-w-0 flex-1 truncate text-xs text-muted sm:block">{current?.topic}</p>
+          <p className="hidden min-w-0 flex-1 truncate text-xs text-muted sm:block">
+            {searching ? `「${needle}」が ${shown.length}件` : inCompare ? "ふたりの全部のチャンネル" : comparing ? "あとひとり選ぶ" : inDossier ? "全部のチャンネル" : current?.topic}
+          </p>
+          <label className="flex h-8 min-w-0 shrink items-center gap-1 rounded bg-bg px-2 text-xs text-muted sm:w-40">
+            <Search className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="検索"
+              aria-label="ログを検索"
+              className="w-14 min-w-0 flex-1 bg-transparent text-fg outline-none placeholder:text-muted sm:w-full"
+            />
+          </label>
+          <button
+            type="button"
+            aria-pressed={todayOnly}
+            onClick={() => setTodayOnly((value) => !value)}
+            className={cx("min-h-11 shrink-0 rounded px-2 text-xs", todayOnly ? "bg-primary text-primary-ink" : "text-muted")}
+          >
+            今日
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setDossier(false);
+              setQuery("");
+              setCompare((value) => {
+                if (!value && state.selected) setPair((prev) => (prev.length === 0 ? [state.selected as string] : prev));
+                return !value;
+              });
+            }}
+            className={cx("min-h-11 shrink-0 rounded px-2 text-xs", compare ? "bg-primary text-primary-ink" : "text-muted")}
+          >
+            比べる
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setCompare(false);
+              setDossier((value) => !value);
+            }}
+            className={cx("min-h-11 shrink-0 rounded px-2 text-xs", dossier ? "bg-primary text-primary-ink" : "text-muted")}
+          >
+            全記録
+          </button>
           <button
             type="button"
             onClick={onToggleFilter}
@@ -435,19 +659,38 @@ function PlayScreen({
             <Users className="h-4 w-4" aria-hidden />
             {aliveCount}
           </span>
-          <button type="button" onClick={onRestart} className="inline-flex min-h-11 items-center px-2 text-xs text-muted lg:hidden">
+          <button type="button" onClick={onRestart} className="inline-flex min-h-11 shrink-0 items-center px-2 text-xs text-muted lg:hidden">
             最初から
+          </button>
+          <button type="button" onClick={onReset} className="inline-flex min-h-11 shrink-0 items-center px-2 text-xs text-muted lg:hidden">
+            初期化
           </button>
           <button type="button" onClick={onRules} className="inline-flex min-h-11 min-w-11 items-center justify-center text-muted lg:hidden" aria-label="ルール">
             <BookOpen className="h-5 w-5" aria-hidden />
           </button>
         </header>
+        <div className="flex items-center justify-between border-b border-black/20 px-3 text-[11px] text-muted">
+          <p>
+            局コード <span className="tracking-widest text-fg">{codeOf(state.seed)}</span>
+          </p>
+          <button
+            type="button"
+            onClick={() => {
+              const text = codeOf(state.seed);
+              void navigator.clipboard?.writeText(text).then(() => setCopied(true));
+              window.setTimeout(() => setCopied(false), 1200);
+            }}
+            className="inline-flex min-h-11 items-center px-2"
+          >
+            {copied ? "コピーした" : "コピー"}
+          </button>
+        </div>
         <div className="flex gap-1 overflow-x-auto border-b border-black/20 px-2 py-1 lg:hidden">
           {CHANNELS.map((item) => (
             <button
               key={item.id}
               type="button"
-              onClick={() => onChannel(item.id)}
+              onClick={() => openChannel(item.id)}
               className={cx(
                 "inline-flex min-h-11 shrink-0 items-center gap-1 rounded-full px-3 text-xs",
                 channel === item.id ? "bg-surface font-medium text-fg" : "text-muted",
@@ -455,22 +698,75 @@ function PlayScreen({
             >
               <Hash className="h-3.5 w-3.5" aria-hidden />
               {item.name}
-              {unread(item.id) ? <span className="h-1.5 w-1.5 rounded-full bg-fg" /> : null}
+              {item.id === "pins" && pins.length > 0 ? (
+                <span className="text-[10px] text-muted">{pins.length}</span>
+              ) : unread(item.id) ? (
+                <span className="h-1.5 w-1.5 rounded-full bg-fg" />
+              ) : null}
             </button>
           ))}
         </div>
 
         <div className="flex min-h-0 flex-1 flex-col xl:flex-row">
-          <MemberList state={state} onSelect={onSelect} className="order-1 xl:order-2" />
+          <MemberList state={state} onSelect={pickPerson} pair={compare ? pair : []} className="order-1 xl:order-2" />
           <div className="order-2 flex min-h-0 flex-1 flex-col xl:order-1">
             <div ref={logRef} className="min-h-0 flex-1 overflow-y-auto py-2" aria-live="polite">
-              {visible.length === 0 ? (
+              {shown.length === 0 ? (
                 <p className="px-4 py-6 text-sm text-muted">
-                  {channel === "dm" ? "スラッシュコマンドの結果は、ここに残る。" : "このチャンネルには、まだログがない。"}
+                  {searching
+                    ? "その言葉は、まだ出ていない。"
+                    : comparing && pair.length < 2
+                      ? "比べたい子を、2人選んで。もう一度押すと外れる。"
+                      : todayOnly
+                        ? `${day.label}のログは、まだない。`
+                        : inCompare
+                        ? "このふたりのログは、まだない。"
+                        : dossier && !state.selected
+                      ? "メンバーを選ぶと、全部のチャンネルの発言がここに並ぶ。"
+                      : inDossier
+                        ? "この子のログは、まだない。"
+                        : channel === "pins"
+                          ? "発言のピンを押すと、ここに集まる。投票の前に見比べられる。"
+                          : channel === "dm"
+                            ? "スラッシュコマンドの結果は、ここに残る。"
+                            : "このチャンネルには、まだログがない。"}
                 </p>
               ) : null}
-              {visible.map((item, index) => (
-                <LogRow key={item.id} item={item} stamp={stampFor(item, index)} onSelect={onSelect} />
+              {shown.map((item, index) => (
+                <div key={item.id}>
+                  {searching || inDossier || inCompare || channel === "pins" ? (
+                    <p className="px-4 pt-2 text-[10px] font-bold tracking-wide text-muted">
+                      #{CHANNELS.find((entry) => entry.id === (item.channel ?? "zatsu"))?.name ?? "雑談"}
+                    </p>
+                  ) : null}
+                  <div className="flex items-start">
+                    <div className="min-w-0 flex-1">
+                      <LogRow item={item} stamp={stampFor(item, index)} onSelect={pickPerson} />
+                    </div>
+                    {item.personaId ? (
+                      <button
+                        type="button"
+                        onClick={() => quoteLine(item)}
+                        aria-label="メモに引用"
+                        className="mt-2 inline-flex h-11 shrink-0 items-center px-2 text-xs text-muted hover:text-fg"
+                      >
+                        引用
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => onPin(item.id)}
+                      aria-pressed={pins.includes(item.id)}
+                      aria-label={pins.includes(item.id) ? "証拠から外す" : "証拠にピンする"}
+                      className={cx(
+                        "mr-2 mt-2 inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full",
+                        pins.includes(item.id) ? "text-[#fee75c]" : "text-muted hover:bg-surface hover:text-fg",
+                      )}
+                    >
+                      <Pin className={cx("h-4 w-4", pins.includes(item.id) && "fill-current")} aria-hidden />
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
             {selected ? (
@@ -509,30 +805,94 @@ function PlayScreen({
   );
 }
 
+function CluePhoto({ src, caption }: { src: string; caption: string }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} className="mt-2 block max-w-sm text-left" aria-label="写真を大きく見る">
+        <img src={src} alt="" className="max-h-72 w-full rounded-lg object-cover" />
+      </button>
+      {open ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" role="dialog" aria-modal="true" aria-label={caption} onClick={() => setOpen(false)}>
+          <div className="flex max-h-[90dvh] max-w-3xl flex-col items-center gap-3" onClick={(event) => event.stopPropagation()}>
+            <img src={src} alt={caption} className="max-h-[75dvh] w-auto max-w-full rounded-lg object-contain" />
+            <p className="max-w-lg text-center text-sm text-white">{caption}</p>
+            <button type="button" onClick={() => setOpen(false)} className="inline-flex min-h-11 items-center rounded-md bg-white/15 px-4 text-sm text-white">
+              閉じる
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function stampFor(item: LogItem, index: number) {
   const hour = 19 + item.day;
   const minute = String((index * 3) % 60).padStart(2, "0");
   return `今日 ${hour}:${minute}`;
 }
 
-function MemberList({ state, onSelect, className }: { state: GameState; onSelect: (id: string) => void; className?: string }) {
-  const online = PERSONAS.filter((persona) => !state.exiled.includes(persona.id));
-  const offline = PERSONAS.filter((persona) => state.exiled.includes(persona.id));
+function MemberList({ state, onSelect, pair, className }: { state: GameState; onSelect: (id: string) => void; pair: string[]; className?: string }) {
+  const [filter, setFilter] = useState<"all" | "sus" | "safe" | "open">("all");
+  useEffect(() => {
+    setFilter("all");
+  }, [state.seed]);
+  const match = (id: string) => {
+    if (state.selected === id || pair.includes(id)) return true;
+    const mark = state.marks[id];
+    if (filter === "sus") return mark === "sus";
+    if (filter === "safe") return mark === "safe";
+    if (filter === "open") return !mark;
+    return true;
+  };
+  const online = PERSONAS.filter((persona) => !state.exiled.includes(persona.id) && match(persona.id));
+  const offline = PERSONAS.filter((persona) => state.exiled.includes(persona.id) && match(persona.id));
+  const chips = [
+    ["all", "全員"],
+    ["sus", "疑"],
+    ["safe", "白"],
+    ["open", "未"],
+  ] as const;
   return (
-    <aside className={cx("flex max-h-28 shrink-0 gap-1 overflow-x-auto border-b border-black/20 bg-bg px-2 py-2 xl:max-h-none xl:w-60 xl:flex-col xl:overflow-y-auto xl:border-b-0 xl:border-l xl:bg-bg-2", className)}>
-      <p className="hidden px-2 pt-3 text-xs font-bold text-muted xl:block">オンライン — {online.length}</p>
-      {online.map((persona) => (
-        <MemberButton key={persona.id} state={state} personaId={persona.id} onSelect={onSelect} />
-      ))}
-      {offline.length > 0 ? <p className="hidden px-2 pt-3 text-xs font-bold text-muted xl:block">オフライン — {offline.length}</p> : null}
-      {offline.map((persona) => (
-        <MemberButton key={persona.id} state={state} personaId={persona.id} onSelect={onSelect} />
-      ))}
+    <aside className={cx("flex max-h-40 shrink-0 flex-col gap-1 border-b border-black/20 bg-bg px-2 py-2 xl:max-h-none xl:w-60 xl:overflow-hidden xl:border-b-0 xl:border-l xl:bg-bg-2", className)}>
+      <div className="flex shrink-0 gap-1 overflow-x-auto">
+        {chips.map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            aria-pressed={filter === id}
+            onClick={() => setFilter(id)}
+            className={cx("inline-flex min-h-11 shrink-0 items-center rounded px-2 text-xs", filter === id ? "bg-primary text-primary-ink" : "text-muted")}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="flex min-h-0 flex-1 gap-1 overflow-x-auto xl:flex-col xl:overflow-y-auto">
+        {online.length === 0 && offline.length === 0 ? <p className="px-2 py-2 text-xs text-muted">その印の子はいない。</p> : null}
+        {online.length > 0 ? <p className="hidden px-2 pt-1 text-xs font-bold text-muted xl:block">オンライン — {online.length}</p> : null}
+        {online.map((persona) => (
+          <MemberButton key={persona.id} state={state} personaId={persona.id} onSelect={onSelect} compared={pair.includes(persona.id)} />
+        ))}
+        {offline.length > 0 ? <p className="hidden px-2 pt-3 text-xs font-bold text-muted xl:block">オフライン — {offline.length}</p> : null}
+        {offline.map((persona) => (
+          <MemberButton key={persona.id} state={state} personaId={persona.id} onSelect={onSelect} compared={pair.includes(persona.id)} />
+        ))}
+      </div>
     </aside>
   );
 }
 
-function MemberButton({ state, personaId, onSelect }: { state: GameState; personaId: string; onSelect: (id: string) => void }) {
+function MemberButton({ state, personaId, onSelect, compared }: { state: GameState; personaId: string; onSelect: (id: string) => void; compared?: boolean }) {
   const persona = personaById(personaId);
   const gone = state.exiled.includes(personaId);
   const inner = INNERS[state.assignments[personaId] ?? ""];
@@ -547,7 +907,8 @@ function MemberButton({ state, personaId, onSelect }: { state: GameState; person
       onClick={() => onSelect(persona.id)}
       className={cx(
         "flex w-14 shrink-0 flex-col items-center gap-1 rounded px-1 py-1 xl:w-auto xl:flex-row xl:gap-2 xl:px-2",
-        active ? "bg-surface" : "xl:hover:bg-surface/70",
+        active || compared ? "bg-surface" : "xl:hover:bg-surface/70",
+        compared ? "ring-1 ring-primary" : "",
         gone ? "opacity-60" : "",
       )}
     >
@@ -646,7 +1007,7 @@ function SelectedPanel({
         <input
           value={state.notes[personaId] ?? ""}
           onChange={(event) => onNote(personaId, event.target.value)}
-          maxLength={40}
+          maxLength={120}
           placeholder="気になった言葉"
           className="mt-1 min-h-11 w-full rounded bg-bg px-3 text-sm text-fg outline-none"
         />
@@ -720,7 +1081,7 @@ function LogRow({ item, stamp, onSelect }: { item: LogItem; stamp: string; onSel
             <span className="ml-2 text-xs text-muted">{stamp}</span>
           </p>
           <p className="text-[15px] leading-snug text-fg">{item.text}</p>
-          {item.image ? <img src={item.image} alt="" className="mt-2 max-h-72 w-full max-w-sm rounded-lg object-cover" /> : null}
+          {item.image ? <CluePhoto src={item.image} caption={item.text} /> : null}
         </div>
       </article>
     );
@@ -931,6 +1292,10 @@ function ResultScreen({ state, onAgain, onTitle }: { state: GameState; onAgain: 
         })}
       </div>
 
+      <p className="mt-4 text-sm text-muted">
+        局コード <span className="tracking-widest font-bold text-fg">{codeOf(state.seed)}</span>
+        。同じコードで入ると、中の人も手がかりも同じ。
+      </p>
       <div className="mt-6 flex flex-col gap-3 sm:flex-row">
         <button type="button" data-testid="play-again" onClick={onAgain} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-primary px-6 font-bold text-primary-ink">
           <RotateCcw className="h-4 w-4" aria-hidden />
@@ -976,11 +1341,19 @@ function Rules({ onClose }: { onClose: () => void }) {
       <ul className="mt-3 space-y-2 text-sm leading-relaxed text-fg">
         <li>10人の美少女のうち、本物の女の子はひとり。あとの9人はおじさん。組み合わせは毎局変わる。</li>
         <li>公開チャットは可愛く演じている。にゃん、などの口調はアバターのキャラで、証拠ではない。</li>
-        <li>手がかりの型は300以上。入退室、プロフィール、画像、スタンプ、リアクションのどれに出るかは、毎回変わる。日が進むと、強いログが増える。</li>
+        <li>手がかりの型は300以上。入退室、プロフィール、画像、スタンプ、リアクションのどれに出るかは、毎回変わる。日が進むと、強いログが増える。画像は中の人ごとに4枚あって、局が変わると別の写真が貼られる。</li>
+        <li>画像を押すと大きく開く。外か「閉じる」で戻る。</li>
+        <li>メンバー一覧の「疑」「白」「未」で、印をつけた子だけに絞れる。選んでいる子は残る。</li>
+        <li>気になった発言はピンできる。#証拠に、見比べたいログだけが残る。「引用」で、その子のメモにも残る。</li>
+        <li>メンバーを選んで「全記録」を押すと、その子の発言がチャンネルをまたいで並ぶ。</li>
+        <li>「比べる」で2人を選ぶと、ふたりのログが並ぶ。もう一度押すと外れる。</li>
+        <li>「今日」を押すと、いまの日のログだけが残る。もう一度押すと、前の日も戻る。</li>
+        <li>上の検索に言葉を入れると、全部のチャンネルから、その言葉の出たログだけが並ぶ。</li>
         <li>調査は1日2回まで。質問・過去配信・印象は、聞いた本人の生活が事実として出る。マイク事故は1日1回。</li>
         <li>印象は、聞かれた子の本音が漏れる。話題にした相手の正体とは限らない。</li>
         <li>日を終えると夜になる。本物がおじさんを一人喰い、その子はDiscordを退出する。抜けた子はおじさん確定。本物は残る。</li>
         <li>キック投票で過半数を取った子を、Botがサーバーからキックする。キックされたのが本物ならクリア。</li>
+        <li>局コードが同じなら、中の人も手がかりも同じ。タイトルから、そのコードで入れる。</li>
         <li>おじさんをキックしても負けにはならない。その子が抜けるだけ。3日目が終わるまでに本物をキックできないと失敗。</li>
       </ul>
       <button type="button" onClick={onClose} className="mt-4 min-h-11 w-full rounded-2xl bg-primary font-bold text-primary-ink">
@@ -1088,9 +1461,17 @@ function ExileSheet({
         参加者{voters}。過半数は{need}票。届いた子を Bot がサーバーからキックする。本物ならクリア。
         {state.day >= 2 ? " 今日が最後。本物をキックできないと失敗。" : " おじさんでも、その子が抜けるだけ。"}
         {state.probesLeft > 0 ? ` 調査が${state.probesLeft}回残っている。` : ""}
+        カードには、つけた印とメモと、ピンした証拠の数が出る。
       </p>
       <div className="mt-3 grid grid-cols-2 gap-2">
-        {alive.map((persona) => (
+        {alive.map((persona) => {
+          const note = state.notes[persona.id]?.trim();
+          const mark = state.marks[persona.id];
+          const pinned = (state.pins ?? []).filter((id) => {
+            const item = state.log.find((entry) => entry.id === id);
+            return item?.personaId === persona.id || item?.targetId === persona.id;
+          }).length;
+          return (
           <button
             key={persona.id}
             type="button"
@@ -1099,9 +1480,17 @@ function ExileSheet({
             className={cx("overflow-hidden rounded-2xl border text-left", draft === persona.id ? "border-primary" : "border-line")}
           >
             <Face src={persona.image} alt="" className="aspect-video w-full" />
-            <span className="block px-2 py-2 text-sm text-fg">{persona.name}</span>
+            <span className="block px-2 pt-2 text-sm text-fg">{persona.name}</span>
+            <span className="flex flex-wrap gap-1 px-2 pb-2 text-[10px]">
+              <span className={cx("rounded px-1 font-bold", mark === "sus" ? "bg-primary text-primary-ink" : mark === "safe" ? "bg-accent text-accent-ink" : "bg-bg text-muted")}>
+                {mark === "sus" ? "疑" : mark === "safe" ? "白" : "未"}
+              </span>
+              {pinned > 0 ? <span className="rounded bg-bg px-1 text-muted">証拠 {pinned}</span> : null}
+            </span>
+            {note ? <span className="block px-2 pb-2 text-[11px] leading-snug text-muted">{note.length > 42 ? `${note.slice(0, 42)}…` : note}</span> : null}
           </button>
-        ))}
+          );
+        })}
       </div>
       <div className="mt-3 grid grid-cols-2 gap-2">
         <button type="button" data-testid="vote-skip" onClick={onSkip} className="min-h-11 rounded-2xl border border-line bg-bg text-sm font-medium text-fg">

@@ -43,6 +43,7 @@ export function loadSession(): Session | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as { v?: number; state?: unknown; channel?: unknown };
     if (parsed.v !== VERSION || !isState(parsed.state)) return null;
+    if (!Array.isArray(parsed.state.pins)) parsed.state.pins = [];
     return { state: parsed.state, channel: isChannel(parsed.channel) ? parsed.channel : "zatsu" };
   } catch {
     return null;
